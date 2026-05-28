@@ -1,0 +1,27 @@
+# Node modules
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Secrets and Environment Variables
+.env
+.env.local
+.env.*
+
+# Local AI Storage (CRITICAL: Do not push gigabytes of chunk data to GitHub)
+backend/storage-backpack/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Frontend Build
+frontend/dist/
+frontend/build/
+
+# OS Files
+.DS_Store
+Thumbs.db
+Qwen2.5-0.5B-Instruct-GGUF.txt
