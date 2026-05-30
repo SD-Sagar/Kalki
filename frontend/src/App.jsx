@@ -99,25 +99,25 @@ function AdminGate() {
   return (
     <div className="flex flex-col items-center justify-center h-screen bg-black overflow-hidden relative">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-red-950/40 via-black to-black pointer-events-none"></div>
-      
+
       <div className="z-10 flex flex-col items-center gap-12">
         <h1 className="text-7xl md:text-9xl font-black tracking-[0.2em] text-transparent bg-clip-text bg-gradient-to-b from-red-500 to-red-900 drop-shadow-[0_0_25px_rgba(239,68,68,0.6)] select-none">
           KALKI
         </h1>
-        
+
         <form onSubmit={handleAdminLogin} className="relative group">
-          <input 
-            className="bg-black/50 border-b-2 border-red-900/50 text-red-500 px-6 py-3 focus:outline-none focus:border-red-500 text-center tracking-[1em] font-mono transition-all w-96 backdrop-blur-sm" 
-            type="password" 
-            placeholder="ACCESS CODE" 
-            value={secret} 
-            onChange={e => setSecret(e.target.value)} 
+          <input
+            className="bg-black/50 border-b-2 border-red-900/50 text-red-500 px-6 py-3 focus:outline-none focus:border-red-500 text-center tracking-[1em] font-mono transition-all w-96 backdrop-blur-sm"
+            type="password"
+            placeholder="ACCESS CODE"
+            value={secret}
+            onChange={e => setSecret(e.target.value)}
             autoFocus
           />
           <div className="absolute inset-0 border border-red-500/0 group-hover:border-red-500/20 pointer-events-none transition-all rounded-sm shadow-[0_0_15px_rgba(239,68,68,0.1)]"></div>
         </form>
       </div>
-      
+
       <div className="absolute bottom-8 text-red-900/40 font-mono text-xs tracking-[0.4em] select-none">MASTER OVERRIDE TERMINAL</div>
     </div>
   );
@@ -168,32 +168,32 @@ function useChat(role, userId, username) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages: prev })
           });
-          
+
           // Smart student request logic for users
           if (role === 'user' && msg.fullText.includes("I do not have that information")) {
-             const lastUserQ = prev[prev.length - 2]?.content;
-             if (lastUserQ) {
-               fetch(`${BACKEND_URL}/api/student-request`, {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({ question: lastUserQ })
-               });
-             }
+            const lastUserQ = prev[prev.length - 2]?.content;
+            if (lastUserQ) {
+              fetch(`${BACKEND_URL}/api/student-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: lastUserQ })
+              });
+            }
           }
 
           // Trigger AI title generation if this is the first exchange
           if (prev.length === 2) {
-             fetch(`${BACKEND_URL}/api/chat`, {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/json' },
-               body: JSON.stringify({
-                 sessionId: msg.sessionId,
-                 role,
-                 username,
-                 history: prev,
-                 generateTitle: true
-               })
-             });
+            fetch(`${BACKEND_URL}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: msg.sessionId,
+                role,
+                username,
+                history: prev,
+                generateTitle: true
+              })
+            });
           }
           return prev;
         });
@@ -204,15 +204,8 @@ function useChat(role, userId, username) {
     return () => ws.current.close();
   }, [userId, role, username]);
 
-  const createNewSession = async () => {
-    const res = await fetch(`${BACKEND_URL}/api/chats`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId })
-    });
-    const chat = await res.json();
-    setSessions(prev => [chat, ...prev]);
-    setActiveSessionId(chat._id);
+  const createNewSession = () => {
+    setActiveSessionId(null);
     setChatLog([]);
   };
 
@@ -225,11 +218,19 @@ function useChat(role, userId, username) {
 
   const deleteSession = async (e, id) => {
     e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this chat permanently?")) return;
+
     await fetch(`${BACKEND_URL}/api/chats/${id}`, { method: 'DELETE' });
-    setSessions(prev => prev.filter(s => s._id !== id));
+
+    const newSessions = sessions.filter(s => s._id !== id);
+    setSessions(newSessions);
+
     if (activeSessionId === id) {
-      setChatLog([]);
-      createNewSession();
+      if (newSessions.length > 0) {
+        loadSession(newSessions[0]._id);
+      } else {
+        createNewSession();
+      }
     }
   };
 
@@ -237,12 +238,26 @@ function useChat(role, userId, username) {
     if (!query.trim()) return;
     const newHistory = [...chatLog, { role: 'user', content: query }];
     setChatLog(newHistory);
-    
+
+    let currentSessionId = activeSessionId;
+    if (!currentSessionId) {
+      // Lazy-create the DB session on first message
+      const res = await fetch(`${BACKEND_URL}/api/chats`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      const chat = await res.json();
+      currentSessionId = chat._id;
+      setActiveSessionId(currentSessionId);
+      setSessions(prev => [chat, ...prev]);
+    }
+
     await fetch(`${BACKEND_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        sessionId: activeSessionId,
+      body: JSON.stringify({
+        sessionId: currentSessionId,
         role,
         username,
         message: query,
@@ -259,7 +274,7 @@ function ChatSidebar({ sessions, activeSessionId, createNewSession, loadSession,
   return (
     <div className={`w-64 flex flex-col border-r ${isDark ? 'bg-gray-950 border-gray-800' : 'bg-gray-900 border-gray-800'}`}>
       <div className="p-4">
-        <button 
+        <button
           onClick={createNewSession}
           className={`w-full py-3 px-4 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all ${isDark ? 'bg-red-900/20 text-red-500 hover:bg-red-900/40 border border-red-900/50' : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/20'}`}
         >
@@ -269,15 +284,16 @@ function ChatSidebar({ sessions, activeSessionId, createNewSession, loadSession,
       </div>
       <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4">
         {sessions.map(s => (
-          <div 
-            key={s._id} 
+          <div
+            key={s._id}
             onClick={() => loadSession(s._id)}
             className={`group cursor-pointer px-3 py-3 rounded-lg flex items-center justify-between transition-all ${activeSessionId === s._id ? (isDark ? 'bg-red-900/20 text-red-400' : 'bg-indigo-600/20 text-indigo-400') : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
           >
             <div className="truncate text-sm pr-2 flex-1">{s.title.replace(/["']/g, '')}</div>
-            <button 
+            <button
               onClick={(e) => deleteSession(e, s._id)}
-              className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all p-1"
+              className="text-gray-500 hover:text-red-500 transition-all p-1 ml-2 flex-shrink-0"
+              title="Delete Chat"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             </button>
@@ -304,7 +320,7 @@ function UserSandbox() {
   return (
     <div className="flex h-screen bg-gray-950">
       <ChatSidebar sessions={sessions} activeSessionId={activeSessionId} createNewSession={createNewSession} loadSession={loadSession} deleteSession={deleteSession} />
-      
+
       <div className="flex-1 flex flex-col max-w-5xl mx-auto p-4 relative">
         <div className="flex-1 overflow-y-auto mb-4 space-y-6 pr-4 mt-4">
           {chatLog.length === 0 && (
@@ -322,15 +338,15 @@ function UserSandbox() {
           ))}
         </div>
         <div className="relative bottom-4">
-          <input 
+          <input
             className="w-full px-6 py-4 bg-gray-900 border border-gray-700 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-[0_0_20px_rgba(0,0,0,0.3)] pr-16 text-lg"
-            value={query} 
-            onChange={e => setQuery(e.target.value)} 
-            onKeyDown={e => { if(e.key === 'Enter') { sendQuery(query); setQuery(''); } }}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { sendQuery(query); setQuery(''); } }}
             placeholder={`Ask Kalki...`}
           />
-          <button 
-            onClick={() => { sendQuery(query); setQuery(''); }} 
+          <button
+            onClick={() => { sendQuery(query); setQuery(''); }}
             className="absolute right-2 top-2 bottom-2 aspect-square bg-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-500 transition-colors"
           >
             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
@@ -361,7 +377,7 @@ function AdminDashboard() {
       <div className="w-64 bg-gray-900 border-r border-gray-800 p-4 flex flex-col gap-2 relative z-10 shadow-2xl shadow-black">
         <div className="text-2xl font-bold tracking-widest text-red-500 mb-8 px-4 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]">MASTER DECK</div>
         {['live', 'queue', 'requests', 'chat'].map(tab => (
-          <button 
+          <button
             key={tab}
             className={`text-left px-4 py-3 rounded-lg capitalize transition-all ${activeTab === tab ? 'bg-red-500/10 text-red-400 border border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.1)]' : 'text-gray-400 hover:bg-gray-800'}`}
             onClick={() => setActiveTab(tab)}
@@ -370,11 +386,11 @@ function AdminDashboard() {
           </button>
         ))}
 
-        <button 
-            onClick={handleLogout}
-            className="absolute bottom-8 left-4 right-4 py-3 bg-red-900/20 border border-red-900/50 text-red-500 rounded-lg hover:bg-red-900/40 hover:border-red-500 transition-all uppercase tracking-widest text-sm font-bold"
+        <button
+          onClick={handleLogout}
+          className="absolute bottom-8 left-4 right-4 py-3 bg-red-900/20 border border-red-900/50 text-red-500 rounded-lg hover:bg-red-900/40 hover:border-red-500 transition-all uppercase tracking-widest text-sm font-bold"
         >
-            Lock Deck
+          Lock Deck
         </button>
       </div>
       <div className="flex-1 flex overflow-hidden">
@@ -389,7 +405,7 @@ function AdminDashboard() {
 
 function LiveIngestion() {
   const [keywords, setKeywords] = useState('');
-  
+
   const toggleScraper = async (action) => {
     await fetch(`${BACKEND_URL}/api/admin/scraper/${action}`, {
       method: 'POST',
@@ -402,10 +418,10 @@ function LiveIngestion() {
     <div className="space-y-6">
       <h2 className="text-2xl font-semibold text-gray-100">Live Web Ingestion</h2>
       <div className="p-6 bg-gray-900 border border-gray-800 rounded-xl space-y-4">
-        <input 
-          className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-lg focus:border-red-500 focus:outline-none" 
-          placeholder="Keywords (e.g. quantum physics, history)" 
-          value={keywords} 
+        <input
+          className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-lg focus:border-red-500 focus:outline-none"
+          placeholder="Keywords (e.g. quantum physics, history)"
+          value={keywords}
           onChange={e => setKeywords(e.target.value)}
         />
         <div className="flex gap-4">
@@ -426,7 +442,12 @@ function TeacherQueue() {
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === 'SCRAPER_DATA') {
-        setQueue(prev => [...prev, JSON.parse(msg.data)]);
+        try {
+          const parsed = JSON.parse(msg.data);
+          setQueue(prev => [...prev, parsed]);
+        } catch (e) {
+          console.log("Scraper Log:", msg.data);
+        }
       }
     };
     return () => ws.current.close();
@@ -449,8 +470,8 @@ function TeacherQueue() {
       {queue.map((item, i) => (
         <div key={i} className="p-6 bg-gray-900 border border-gray-800 rounded-xl space-y-4">
           <div className="text-sm font-mono text-indigo-400">Subject: {item.subject}</div>
-          <textarea 
-            className="w-full h-32 p-4 bg-gray-950 border border-gray-800 rounded-lg focus:outline-none" 
+          <textarea
+            className="w-full h-32 p-4 bg-gray-950 border border-gray-800 rounded-lg focus:outline-none"
             defaultValue={item.text}
             onChange={(e) => {
               const newQueue = [...queue];
@@ -544,7 +565,7 @@ function AdminChat() {
         return;
       }
     }
-    
+
     sendQuery(query);
     setQuery('');
   };
@@ -552,11 +573,11 @@ function AdminChat() {
   return (
     <div className="flex-1 flex overflow-hidden">
       <ChatSidebar sessions={sessions} activeSessionId={activeSessionId} createNewSession={createNewSession} loadSession={loadSession} deleteSession={deleteSession} isDark={true} />
-      
+
       <div className="flex-1 flex flex-col p-6 max-w-4xl mx-auto w-full relative">
         <h2 className="text-xl font-bold text-red-500 mb-4 tracking-widest">ADMIN TERMINAL</h2>
         <div className="text-red-900/60 font-mono text-xs text-center absolute top-6 right-6">Use [Learn: Subject] Your Text</div>
-        
+
         <div className="flex-1 bg-black/40 border border-red-900/30 rounded-2xl p-6 overflow-y-auto space-y-6 shadow-inner mb-4">
           {chatLog.length === 0 && (
             <div className="h-full flex items-center justify-center text-red-900/40 flex-col gap-2 font-mono">
@@ -572,9 +593,9 @@ function AdminChat() {
             </div>
           ))}
         </div>
-        
+
         <div className="relative">
-          <input 
+          <input
             className="w-full px-6 py-4 bg-black border border-red-900/50 rounded-xl focus:outline-none focus:border-red-500 font-mono text-red-400 placeholder-red-900/50 transition-all shadow-[0_0_15px_rgba(239,68,68,0.1)]"
             value={query}
             onChange={e => setQuery(e.target.value)}

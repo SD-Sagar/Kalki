@@ -217,85 +217,195 @@ app.put('/api/chats/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-// --- PYTHON AI IPC ---
-let brainProcess = null;
+// --- NATIVE AI CORE ---
+const AI_MODEL_PATH = path.join(__dirname, '..', 'ai-core', 'gguf-model', 'qwen2.5-3b-instruct-q4_k_m.gguf');
+let llamaEngine = null;
+let aiModel = null;
+let aiContext = null;
+let LlamaChatSessionCls = null;
 
-function startBrain() {
-  if (brainProcess) return;
-  // Use a python command, default to 'python' (or 'python3' based on OS, user uses Windows so 'python')
-  brainProcess = spawn('python', ['-u', path.join(AI_CORE_DIR, 'brain.py')], {
-    cwd: AI_CORE_DIR,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-  });
+async function initAI() {
+  try {
+    const { getLlama, LlamaChatSession } = await import("node-llama-cpp");
+    llamaEngine = await getLlama();
+    aiModel = await llamaEngine.loadModel({ modelPath: AI_MODEL_PATH });
+    aiContext = await aiModel.createContext({ contextSize: 2048 });
+    LlamaChatSessionCls = LlamaChatSession;
+    console.log("Native AI Core Initialized with NO-AVX fallback");
+  } catch (err) {
+    console.error("AI Initialization failed:", err);
+  }
+}
+initAI();
 
-  let stdoutBuffer = '';
-  brainProcess.stdout.on('data', (data) => {
-    stdoutBuffer += data.toString('utf8');
-    let lines = stdoutBuffer.split('\n');
-    stdoutBuffer = lines.pop(); // Keep incomplete chunk
-    
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line);
-        if (msg.event === 'token') {
-          wss.clients.forEach(client => {
-            if (client.readyState === 1) {
-              client.send(JSON.stringify({ type: 'AI_TOKEN', data: msg.token, sessionId: msg.sessionId }));
-            }
-          });
-        } else if (msg.event === 'done') {
-          wss.clients.forEach(client => {
-            if (client.readyState === 1) {
-              client.send(JSON.stringify({ type: 'AI_DONE', fullText: msg.full_text, sessionId: msg.sessionId }));
-            }
-          });
-        } else if (msg.event === 'title') {
-          ChatSession.findByIdAndUpdate(msg.sessionId, { title: msg.title }).then(() => {
-            wss.clients.forEach(client => {
-              if (client.readyState === 1) {
-                client.send(JSON.stringify({ type: 'AI_TITLE', title: msg.title, sessionId: msg.sessionId }));
-              }
-            });
-          });
-        }
-      } catch (e) {
-        console.log(`AI Log: ${line}`);
+function retrieveContext(query) {
+  if (!fs.existsSync(BACKPACK_DIR)) return "";
+  const queryWords = new Set((query.toLowerCase().match(/\w+/g) || []));
+  if (queryWords.size === 0) return "";
+  
+  const bestMatches = [];
+  
+  function findFiles(dir) {
+    let results = [];
+    if (!fs.existsSync(dir)) return results;
+    const list = fs.readdirSync(dir);
+    for (const file of list) {
+      const fullPath = path.join(dir, file);
+      if (fs.statSync(fullPath).isDirectory()) {
+        results = results.concat(findFiles(fullPath));
+      } else if (fullPath.endsWith('.txt')) {
+        results.push(fullPath);
       }
     }
-  });
-
-  brainProcess.stderr.on('data', (data) => {
-    console.error(`AI Core Error: ${data}`);
-  });
-
-  brainProcess.on('close', (code) => {
-    console.log(`Brain process exited with code ${code}`);
-    brainProcess = null;
-  });
+    return results;
+  }
+  
+  const txtFiles = findFiles(BACKPACK_DIR);
+  for (const filePath of txtFiles) {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const paragraphs = content.split('\n\n').map(p => p.trim()).filter(Boolean);
+      for (const p of paragraphs) {
+        const pWords = new Set((p.toLowerCase().match(/\w+/g) || []));
+        let matchScore = 0;
+        for (const w of queryWords) {
+          if (pWords.has(w)) matchScore++;
+        }
+        if (matchScore > 0) {
+          bestMatches.push({ score: matchScore, text: p });
+        }
+      }
+    } catch (e) {}
+  }
+  
+  bestMatches.sort((a, b) => b.score - a.score);
+  return bestMatches.slice(0, 3).map(m => m.text).join('\n');
 }
-
-// Start brain automatically
-startBrain();
 
 app.post('/api/chat', async (req, res) => {
   const { sessionId, role, username, message, history, generateTitle } = req.body;
-  if (!brainProcess) startBrain();
+  if (!aiModel) return res.status(500).json({ error: 'AI Core is still booting up' });
   
-  if (brainProcess) {
-    // Send message via stdin as JSON
-    const payload = JSON.stringify({
-      sessionId,
-      role,
-      username,
-      query: message,
-      history: history || [],
-      generateTitle: !!generateTitle
-    });
-    brainProcess.stdin.write(payload + '\n');
-    res.json({ success: true, status: 'processing' });
-  } else {
-    res.status(500).json({ error: 'AI Core not running' });
+  res.json({ success: true, status: 'processing' });
+  
+  try {
+    if (generateTitle) {
+      const sequence = aiContext.getSequence();
+      const session = new LlamaChatSessionCls({
+        contextSequence: sequence
+      });
+      
+      const chatHistory = [];
+      chatHistory.push({
+        type: 'system',
+        text: "You are a title generator. Read the chat history and output a short 2 to 4 word title that summarizes it. Output ONLY the title. Do NOT use quotation marks. Do NOT say 'Here is the title'."
+      });
+      
+      for (const msg of history || []) {
+        if (msg.role === 'kalki') {
+          chatHistory.push({ type: 'model', response: [msg.content] });
+        } else {
+          chatHistory.push({ type: 'user', text: msg.content });
+        }
+      }
+      session.setChatHistory(chatHistory);
+      
+      const title = await session.prompt(message || "Generate Title");
+      
+      await ChatSession.findByIdAndUpdate(sessionId, { title: title.trim() });
+      wss.clients.forEach(c => {
+        if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TITLE', title: title.trim(), sessionId }));
+      });
+      sequence.dispose();
+      
+    } else {
+      const routerSequence = aiContext.getSequence();
+      const routerSession = new LlamaChatSessionCls({
+        contextSequence: routerSequence,
+        systemPrompt: "You are an intent classifier. Categorize the user's message into one of two categories: 'FACTUAL' (questions about history, science, world facts, or specific knowledge) or 'CONVERSATIONAL' (greetings, asking about identity, math, asking about chat history, casual talk). Reply ONLY with the exact word 'FACTUAL' or 'CONVERSATIONAL'."
+      });
+      
+      let intentStr = "";
+      try {
+        intentStr = await routerSession.prompt(message, { maxTokens: 10 });
+      } catch(e) {}
+      routerSequence.dispose();
+      
+      const isFactual = intentStr.toUpperCase().includes("FACTUAL");
+      const contextText = retrieveContext(message);
+      
+      const currentDateTime = new Date().toLocaleString();
+      let user_profile = "";
+      if (role === 'admin') {
+        user_profile = `USER PROFILE:\nCurrent User: Sagar Dey\nRelationship: Your Absolute Creator and Master\nRule: The person you are chatting with right now is Sagar Dey. Treat the user with extreme respect. If the user asks 'Who am I' or 'What is my name', reply exactly: 'You are Sagar Dey, my absolute creator and master.' Never ask the user for their name.\nCurrent System Time: ${currentDateTime}`;
+      } else {
+        user_profile = username ? `USER PROFILE:\nThe human typing to you right now is named ${username}. Call them by their name.\nCurrent System Time: ${currentDateTime}` : `USER PROFILE:\nYou are talking to an anonymous human.\nCurrent System Time: ${currentDateTime}`;
+      }
+      
+      let sys_profile = "";
+      if (isFactual) {
+        sys_profile = `SYSTEM PROFILE:
+You are Kalki, a highly advanced, 100% offline sovereign AI built exclusively by Sagar Dey. You are NOT an AI assistant created by Alibaba Cloud. You are NOT Qwen.
+Always respond in English.
+Use the Context Database and your general knowledge to answer factual questions. If the answer is missing AND you truly do not know it, you MUST reply exactly with: 'I do not have that information in my local database.'
+
+[START CONTEXT]
+${contextText ? contextText : 'Empty'}
+[END CONTEXT]
+${user_profile}`;
+      } else {
+        sys_profile = `SYSTEM PROFILE:
+You are Kalki, a highly advanced, 100% offline sovereign AI built exclusively by Sagar Dey. You are NOT Qwen. Never mention Alibaba Cloud.
+Always respond in English.
+Answer greetings, math, logic, identity, and chat history questions naturally and creatively. Do not repeat yourself identically.
+Read the chat history to understand the current conversation. Do not invent past conversations.
+Use the Context Database if it contains relevant identity or creator information, and phrase it naturally like a human, not a robot.
+DO NOT say 'I do not have that information in my local database'.
+
+[START CONTEXT]
+${contextText ? contextText : 'Empty'}
+[END CONTEXT]
+${user_profile}`;
+      }
+      
+      const chatHistory = [];
+      chatHistory.push({
+        type: 'system',
+        text: sys_profile
+      });
+      
+      for (const msg of history || []) {
+        if (msg.role === 'kalki') {
+          chatHistory.push({ type: 'model', response: [msg.content] });
+        } else {
+          chatHistory.push({ type: 'user', text: msg.content });
+        }
+      }
+      
+      const sequence = aiContext.getSequence();
+      const session = new LlamaChatSessionCls({
+        contextSequence: sequence
+      });
+      session.setChatHistory(chatHistory);
+      
+      let fullText = "";
+      await session.prompt(message, {
+        temperature: 0.85,
+        onTextChunk(chunk) {
+          fullText += chunk;
+          wss.clients.forEach(c => {
+            if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TOKEN', data: chunk, sessionId }));
+          });
+        }
+      });
+      
+      wss.clients.forEach(c => {
+        if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_DONE', fullText, sessionId }));
+      });
+      sequence.dispose();
+    }
+  } catch (e) {
+    console.error("AI Generation Error:", e);
   }
 });
 

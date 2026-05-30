@@ -8,7 +8,7 @@ def scrape_wikipedia(keyword):
     """Simple Wikipedia scraper for demonstration."""
     url = f"https://en.wikipedia.org/wiki/{keyword.replace(' ', '_')}"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             # Get first 3 paragraphs
@@ -18,7 +18,9 @@ def scrape_wikipedia(keyword):
                 text = p.get_text().strip()
                 if len(text) > 50:
                     text_blocks.append(text)
-                if len(text_blocks) >= 3:
+                # if len(text_blocks) >= 4:
+                #     break
+                if len(text_blocks) >= 4:
                     break
             return " ".join(text_blocks)
     except Exception as e:
