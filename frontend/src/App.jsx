@@ -359,7 +359,7 @@ function UserSandbox() {
 
 // --- ADMIN DASHBOARD ---
 function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('live');
+  const [activeTab, setActiveTab] = useState('command center');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -376,7 +376,7 @@ function AdminDashboard() {
     <div className="flex h-screen overflow-hidden bg-gray-950">
       <div className="w-64 bg-gray-900 border-r border-gray-800 p-4 flex flex-col gap-2 relative z-10 shadow-2xl shadow-black">
         <div className="text-2xl font-bold tracking-widest text-red-500 mb-8 px-4 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]">MASTER DECK</div>
-        {['live', 'queue', 'requests', 'chat'].map(tab => (
+        {['command center', 'requests', 'chat'].map(tab => (
           <button
             key={tab}
             className={`text-left px-4 py-3 rounded-lg capitalize transition-all ${activeTab === tab ? 'bg-red-500/10 text-red-400 border border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.1)]' : 'text-gray-400 hover:bg-gray-800'}`}
@@ -394,10 +394,22 @@ function AdminDashboard() {
         </button>
       </div>
       <div className="flex-1 flex overflow-hidden">
-        {activeTab === 'live' && <div className="p-8 flex-1 overflow-y-auto"><LiveIngestion /></div>}
-        {activeTab === 'queue' && <div className="p-8 flex-1 overflow-y-auto"><TeacherQueue /></div>}
+        {activeTab === 'command center' && <CommandCenter />}
         {activeTab === 'requests' && <div className="p-8 flex-1 overflow-y-auto"><RequestBoard /></div>}
         {activeTab === 'chat' && <AdminChat />}
+      </div>
+    </div>
+  );
+}
+
+function CommandCenter() {
+  return (
+    <div className="flex-1 flex h-full overflow-hidden w-full">
+      <div className="w-1/3 border-r border-gray-800 p-8 overflow-y-auto bg-gray-950 flex-shrink-0">
+        <LiveIngestion />
+      </div>
+      <div className="flex-1 p-8 overflow-y-auto bg-black">
+        <TeacherQueue />
       </div>
     </div>
   );
