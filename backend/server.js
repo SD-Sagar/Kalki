@@ -8,6 +8,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const rag = require('./rag');
 
 const app = express();
 app.use(cors());
@@ -130,7 +131,12 @@ app.post('/api/admin/learn', (req, res) => {
   }
 
   const filename = `data_${Date.now()}.txt`;
-  fs.writeFileSync(path.join(subjectDir, filename), text);
+  const filePath = path.join(subjectDir, filename);
+  fs.writeFileSync(filePath, text);
+  
+  // Add to Vector Memory instantly
+  rag.addChunk(subject, text, filePath).catch(console.error);
+  
   res.json({ success: true, message: 'Saved to local filesystem' });
 });
 
@@ -238,48 +244,13 @@ async function initAI() {
 }
 initAI();
 
-function retrieveContext(query) {
+async function retrieveContext(query) {
   if (!fs.existsSync(BACKPACK_DIR)) return "";
   const queryWords = new Set((query.toLowerCase().match(/\w+/g) || []));
   if (queryWords.size === 0) return "";
   
-  const bestMatches = [];
-  
-  function findFiles(dir) {
-    let results = [];
-    if (!fs.existsSync(dir)) return results;
-    const list = fs.readdirSync(dir);
-    for (const file of list) {
-      const fullPath = path.join(dir, file);
-      if (fs.statSync(fullPath).isDirectory()) {
-        results = results.concat(findFiles(fullPath));
-      } else if (fullPath.endsWith('.txt')) {
-        results.push(fullPath);
-      }
-    }
-    return results;
-  }
-  
-  const txtFiles = findFiles(BACKPACK_DIR);
-  for (const filePath of txtFiles) {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const paragraphs = content.split('\n\n').map(p => p.trim()).filter(Boolean);
-      for (const p of paragraphs) {
-        const pWords = new Set((p.toLowerCase().match(/\w+/g) || []));
-        let matchScore = 0;
-        for (const w of queryWords) {
-          if (pWords.has(w)) matchScore++;
-        }
-        if (matchScore > 0) {
-          bestMatches.push({ score: matchScore, text: p });
-        }
-      }
-    } catch (e) {}
-  }
-  
-  bestMatches.sort((a, b) => b.score - a.score);
-  return bestMatches.slice(0, 3).map(m => m.text).join('\n');
+  // Use the new Vector-RAG engine to mathematically fetch only relevant chunks
+  return await rag.search(query, 2);
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -332,46 +303,50 @@ app.post('/api/chat', async (req, res) => {
       routerSequence.dispose();
       
       const isFactual = intentStr.toUpperCase().includes("FACTUAL");
-      const contextText = retrieveContext(message);
+      const contextText = await retrieveContext(message);
       
       const currentDateTime = new Date().toLocaleString();
       let user_profile = "";
       if (role === 'admin') {
-        user_profile = `USER PROFILE:\nCurrent User: Sagar Dey\nRelationship: Your Absolute Creator and Master\nRule: The person you are chatting with right now is Sagar Dey. Treat the user with extreme respect. If the user asks 'Who am I' or 'What is my name', reply exactly: 'You are Sagar Dey, my absolute creator and master.' Never ask the user for their name.\nCurrent System Time: ${currentDateTime}`;
+        user_profile = `USER PROFILE:\nThe human typing to you right now is Sagar Dey, your creator. Treat him with respect.\nCurrent System Time: ${currentDateTime}`;
       } else {
         user_profile = username ? `USER PROFILE:\nThe human typing to you right now is named ${username}. Call them by their name.\nCurrent System Time: ${currentDateTime}` : `USER PROFILE:\nYou are talking to an anonymous human.\nCurrent System Time: ${currentDateTime}`;
       }
-      
+
+      const core_identity = `CORE IDENTITY:
+- You are Kalki, a highly advanced, 100% offline sovereign AI.
+- You are NOT Qwen. Never mention Alibaba Cloud.
+- Your absolute creator is Sagar Dey, a brilliant developer who engineered you.
+- DO NOT introduce your creator unless the user explicitly asks about him.`;
+
       let sys_profile = "";
       if (isFactual) {
         sys_profile = `SYSTEM PROFILE:
-You are Kalki, a highly advanced, 100% offline sovereign AI built exclusively by Sagar Dey. You are NOT an AI assistant created by Alibaba Cloud. You are NOT Qwen.
+${core_identity}
 Always respond in English.
-Use the Context Database and your general knowledge to answer factual questions. If the answer is missing AND you truly do not know it, you MUST reply exactly with: 'I do not have that information in my local database.'
+Use the Context Database to answer factual questions. If the database does not contain the answer, you may answer from your general knowledge. Only say you do not have the information if you are completely clueless.
 
-[START CONTEXT]
-${contextText ? contextText : 'Empty'}
-[END CONTEXT]
-${user_profile}`;
+CRITICAL RULE: Before answering, you must write down your inner thoughts inside <thought>...</thought> XML tags to plan your answer. After the </thought> tag, write your final response.`;
       } else {
         sys_profile = `SYSTEM PROFILE:
-You are Kalki, a highly advanced, 100% offline sovereign AI built exclusively by Sagar Dey. You are NOT Qwen. Never mention Alibaba Cloud.
+${core_identity}
 Always respond in English.
 Answer greetings, math, logic, identity, and chat history questions naturally and creatively. Do not repeat yourself identically.
 Read the chat history to understand the current conversation. Do not invent past conversations.
-Use the Context Database if it contains relevant identity or creator information, and phrase it naturally like a human, not a robot.
-DO NOT say 'I do not have that information in my local database'.
 
+CRITICAL RULE: Before answering, you must write down your inner thoughts inside <thought>...</thought> XML tags to plan your answer. After the </thought> tag, write your final response.`;
+      }
+
+      const promptText = `
 [START CONTEXT]
 ${contextText ? contextText : 'Empty'}
 [END CONTEXT]
 ${user_profile}`;
-      }
-      
+
       const chatHistory = [];
       chatHistory.push({
         type: 'system',
-        text: sys_profile
+        text: sys_profile + promptText
       });
       
       for (const msg of history || []) {
@@ -389,18 +364,68 @@ ${user_profile}`;
       session.setChatHistory(chatHistory);
       
       let fullText = "";
+      let isThinking = false;
+      let finalResponseStarted = false;
+      let buffer = "";
+
       await session.prompt(message, {
         temperature: 0.85,
         onTextChunk(chunk) {
           fullText += chunk;
-          wss.clients.forEach(c => {
-            if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TOKEN', data: chunk, sessionId }));
-          });
+          buffer += chunk;
+
+          // Detect thought block start
+          if (!isThinking && buffer.includes("<thought>")) {
+            isThinking = true;
+          }
+
+          // Detect thought block end
+          if (isThinking && buffer.includes("</thought>")) {
+            isThinking = false;
+            finalResponseStarted = true;
+            // Clear the buffer up to the end of the thought tag so we don't stream it
+            buffer = buffer.substring(buffer.indexOf("</thought>") + 10).trimStart();
+            
+            // If there's any remaining text after the tag, stream it
+            if (buffer.length > 0) {
+                wss.clients.forEach(c => {
+                  if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TOKEN', data: buffer, sessionId }));
+                });
+                buffer = "";
+            }
+            return;
+          }
+
+          // If we are currently thinking, do not stream anything to the frontend
+          if (isThinking) return;
+
+          // If we haven't started the thought block yet but it's buffering, wait
+          if (!finalResponseStarted && buffer.length < 15) return;
+          
+          // If we have passed the thought block, stream normally
+          if (finalResponseStarted) {
+             wss.clients.forEach(c => {
+               if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TOKEN', data: chunk, sessionId }));
+             });
+          } else if (!buffer.includes("<")) {
+             // Fallback just in case the AI ignored the <thought> rule entirely
+             finalResponseStarted = true;
+             wss.clients.forEach(c => {
+               if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_TOKEN', data: buffer, sessionId }));
+             });
+             buffer = "";
+          }
         }
       });
       
+      // Send the final complete message (excluding the thought block)
+      let cleanedText = fullText;
+      if (cleanedText.includes("</thought>")) {
+          cleanedText = cleanedText.split("</thought>")[1].trim();
+      }
+      
       wss.clients.forEach(c => {
-        if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_DONE', fullText, sessionId }));
+        if (c.readyState === 1) c.send(JSON.stringify({ type: 'AI_DONE', fullText: cleanedText, sessionId }));
       });
       sequence.dispose();
     }
@@ -439,6 +464,7 @@ app.post('/api/admin/scraper/stop', (req, res) => {
   res.json({ success: true, status: 'stopped' });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Kalki Backend running on http://localhost:${PORT}`);
+  await rag.initRAG();
 });
