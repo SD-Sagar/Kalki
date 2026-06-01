@@ -1,7 +1,55 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const BACKEND_URL = 'http://localhost:5000';
+
+const MarkdownComponents = {
+  code({ node, inline, className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const codeString = String(children).replace(/\n$/, '');
+
+    return !inline && match ? (
+      <div className="relative group mt-4 mb-4 rounded-xl overflow-hidden border border-gray-700/50">
+        <div className="flex justify-between items-center px-4 py-2 bg-gray-800 text-gray-400 text-xs font-mono border-b border-gray-700/50">
+          <span>{match[1]}</span>
+          <button
+            onClick={() => navigator.clipboard.writeText(codeString)}
+            className="hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            Copy
+          </button>
+        </div>
+        <SyntaxHighlighter
+          style={vscDarkPlus}
+          language={match[1]}
+          PreTag="div"
+          customStyle={{ margin: 0, padding: '1rem', background: '#1e1e1e', overflowX: 'auto' }}
+          {...props}
+        >
+          {codeString}
+        </SyntaxHighlighter>
+      </div>
+    ) : (
+      <code className={`${className} bg-gray-800/50 px-1.5 py-0.5 rounded text-indigo-300 font-mono text-sm`} {...props}>
+        {children}
+      </code>
+    );
+  },
+  p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
+  h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 text-indigo-400">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5 text-indigo-300">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-lg font-bold mb-2 mt-4 text-indigo-200">{children}</h3>,
+  ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-1">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  a: ({ children, href }) => <a href={href} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">{children}</a>,
+  blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-4 py-1 italic bg-gray-800/30 rounded-r-lg my-4">{children}</blockquote>
+};
 
 function App() {
   return (
@@ -337,7 +385,14 @@ function UserSandbox() {
           {chatLog.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm overflow-hidden break-words ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-gray-800/80 text-gray-200 border border-gray-700/50 rounded-bl-sm'}`}>
-                <pre className="font-sans whitespace-pre-wrap break-words leading-relaxed">{msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<\/?thought>/g, '').trim()}</pre>
+                <div className="font-sans break-words text-base">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={MarkdownComponents}
+                  >
+                    {msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<thought>[\s\S]*?<\/thought>/gi, '').replace(/<\/?thought>/gi, '').trim()}
+                  </ReactMarkdown>
+                </div>
               </div>
             </div>
           ))}
@@ -349,12 +404,12 @@ function UserSandbox() {
             className="w-full px-6 py-4 bg-gray-900 border border-gray-700 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-[0_0_20px_rgba(0,0,0,0.3)] pr-16 text-lg resize-none"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { 
-              if (e.key === 'Enter' && !e.shiftKey) { 
-                e.preventDefault(); 
-                sendQuery(query); 
-                setQuery(''); 
-              } 
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuery(query);
+                setQuery('');
+              }
             }}
             placeholder={`Ask Kalki...`}
           />
@@ -420,6 +475,7 @@ function CommandCenter() {
     <div className="flex-1 flex h-full overflow-hidden w-full">
       <div className="w-1/3 border-r border-gray-800 p-8 overflow-y-auto bg-gray-950 flex-shrink-0">
         <LiveIngestion />
+        <BulkDocumentIngestion />
       </div>
       <div className="flex-1 p-8 overflow-y-auto bg-black">
         <TeacherQueue />
@@ -453,6 +509,69 @@ function LiveIngestion() {
           <button onClick={() => toggleScraper('start')} className="px-6 py-3 bg-green-600/20 text-green-400 border border-green-600/50 rounded-lg hover:bg-green-600/30 transition-colors">Start Learning</button>
           <button onClick={() => toggleScraper('stop')} className="px-6 py-3 bg-red-600/20 text-red-400 border border-red-600/50 rounded-lg hover:bg-red-600/30 transition-colors">Stop Learning</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkDocumentIngestion() {
+  const [subject, setSubject] = useState('');
+  const [text, setText] = useState('');
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!subject) setSubject(file.name.split('.')[0]);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setText(event.target.result);
+    };
+    reader.readAsText(file);
+  };
+
+  const pushToBrain = async () => {
+    if (!subject.trim() || !text.trim()) return;
+    const secret = sessionStorage.getItem('adminSecret');
+    await fetch(`${BACKEND_URL}/api/admin/learn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject, text, secret })
+    });
+    setSubject('');
+    setText('');
+    alert("Document successfully ingested into Kalki's brain!");
+  };
+
+  return (
+    <div className="space-y-6 mt-12">
+      <h2 className="text-2xl font-semibold text-gray-100">Bulk Document Ingestion</h2>
+      <div className="p-6 bg-gray-900 border border-gray-800 rounded-xl space-y-4">
+        <div className="flex gap-4">
+          <input
+            className="flex-1 px-4 py-3 bg-gray-950 border border-gray-800 rounded-lg focus:border-red-500 focus:outline-none"
+            placeholder="Subject Name"
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+          />
+          <label className="px-6 py-3 bg-gray-800 text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors cursor-pointer flex items-center justify-center whitespace-nowrap">
+            Upload File
+            <input type="file" className="hidden" accept=".txt,.md,.js,.jsx,.json" onChange={handleFileUpload} />
+          </label>
+        </div>
+        <textarea
+          className="w-full h-64 p-4 bg-gray-950 border border-gray-800 rounded-lg focus:outline-none font-mono text-sm resize-none"
+          placeholder="Paste bulk text or upload a file to review..."
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
+        <button
+          onClick={pushToBrain}
+          className="w-full px-6 py-3 bg-indigo-600/20 text-indigo-400 border border-indigo-600/50 rounded-lg hover:bg-indigo-600/30 transition-colors font-bold tracking-widest uppercase"
+        >
+          Push to Brain
+        </button>
       </div>
     </div>
   );
@@ -617,8 +736,15 @@ function AdminChat() {
           )}
           {chatLog.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`p-4 rounded-xl max-w-[80%] font-mono text-sm overflow-hidden break-words ${msg.role === 'user' ? 'bg-red-900/20 text-red-400 border border-red-900/50' : 'bg-gray-900 border border-gray-800 text-gray-300'}`}>
-                <pre className="whitespace-pre-wrap font-mono break-words">{msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<\/?thought>/g, '').trim()}</pre>
+              <div className={`p-4 rounded-xl max-w-[80%] text-sm overflow-hidden break-words ${msg.role === 'user' ? 'bg-red-900/20 text-red-400 border border-red-900/50' : 'bg-gray-900 border border-gray-800 text-gray-300'}`}>
+                <div className="break-words font-mono">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={MarkdownComponents}
+                  >
+                    {msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<thought>[\s\S]*?<\/thought>/gi, '').replace(/<\/?thought>/gi, '').trim()}
+                  </ReactMarkdown>
+                </div>
               </div>
             </div>
           ))}
