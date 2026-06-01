@@ -307,6 +307,7 @@ function ChatSidebar({ sessions, activeSessionId, createNewSession, loadSession,
 // --- USER SANDBOX ---
 function UserSandbox() {
   const [query, setQuery] = useState('');
+  const chatEndRef = useRef(null);
   const userId = localStorage.getItem('userId');
   const username = localStorage.getItem('username');
   const navigate = useNavigate();
@@ -316,6 +317,10 @@ function UserSandbox() {
   }, [userId, navigate]);
 
   const { sessions, activeSessionId, chatLog, createNewSession, loadSession, deleteSession, sendQuery } = useChat('user', userId, username);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatLog]);
 
   return (
     <div className="flex h-screen bg-gray-950">
@@ -331,25 +336,33 @@ function UserSandbox() {
           )}
           {chatLog.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-gray-800/80 text-gray-200 border border-gray-700/50 rounded-bl-sm'}`}>
-                <pre className="font-sans whitespace-pre-wrap leading-relaxed">{msg.content.replace(/\[END_OF_RESPONSE\]/g, '')}</pre>
+              <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm overflow-hidden break-words ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-gray-800/80 text-gray-200 border border-gray-700/50 rounded-bl-sm'}`}>
+                <pre className="font-sans whitespace-pre-wrap break-words leading-relaxed">{msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<\/?thought>/g, '').trim()}</pre>
               </div>
             </div>
           ))}
+          <div ref={chatEndRef} className="h-4" />
         </div>
-        <div className="relative bottom-4">
-          <input
-            className="w-full px-6 py-4 bg-gray-900 border border-gray-700 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-[0_0_20px_rgba(0,0,0,0.3)] pr-16 text-lg"
+        <div className="relative mt-2">
+          <textarea
+            rows={1}
+            className="w-full px-6 py-4 bg-gray-900 border border-gray-700 rounded-2xl focus:outline-none focus:border-indigo-500 transition-all shadow-[0_0_20px_rgba(0,0,0,0.3)] pr-16 text-lg resize-none"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { sendQuery(query); setQuery(''); } }}
+            onKeyDown={e => { 
+              if (e.key === 'Enter' && !e.shiftKey) { 
+                e.preventDefault(); 
+                sendQuery(query); 
+                setQuery(''); 
+              } 
+            }}
             placeholder={`Ask Kalki...`}
           />
           <button
             onClick={() => { sendQuery(query); setQuery(''); }}
-            className="absolute right-2 top-2 bottom-2 aspect-square bg-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-500 transition-colors"
+            className="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-500 transition-colors shadow-md"
           >
-            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
           </button>
         </div>
       </div>
@@ -556,7 +569,12 @@ function RequestBoard() {
 
 function AdminChat() {
   const [query, setQuery] = useState('');
+  const chatEndRef = useRef(null);
   const { sessions, activeSessionId, chatLog, createNewSession, loadSession, deleteSession, sendQuery } = useChat('admin', 'admin', 'Sagar Dey');
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatLog]);
 
   const sendCommand = async () => {
     if (!query.trim()) return;
@@ -599,19 +617,26 @@ function AdminChat() {
           )}
           {chatLog.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`p-4 rounded-xl max-w-[80%] font-mono text-sm ${msg.role === 'user' ? 'bg-red-900/20 text-red-400 border border-red-900/50' : 'bg-gray-900 border border-gray-800 text-gray-300'}`}>
-                <pre className="whitespace-pre-wrap font-mono">{msg.content.replace(/\[END_OF_RESPONSE\]/g, '')}</pre>
+              <div className={`p-4 rounded-xl max-w-[80%] font-mono text-sm overflow-hidden break-words ${msg.role === 'user' ? 'bg-red-900/20 text-red-400 border border-red-900/50' : 'bg-gray-900 border border-gray-800 text-gray-300'}`}>
+                <pre className="whitespace-pre-wrap font-mono break-words">{msg.content.replace(/\[END_?OF_?RESPONSE\]/gi, '').replace(/<\/?thought>/g, '').trim()}</pre>
               </div>
             </div>
           ))}
+          <div ref={chatEndRef} className="h-4" />
         </div>
 
-        <div className="relative">
-          <input
-            className="w-full px-6 py-4 bg-black border border-red-900/50 rounded-xl focus:outline-none focus:border-red-500 font-mono text-red-400 placeholder-red-900/50 transition-all shadow-[0_0_15px_rgba(239,68,68,0.1)]"
+        <div className="relative mt-2">
+          <textarea
+            rows={1}
+            className="w-full px-6 py-4 bg-black border border-red-900/50 rounded-xl focus:outline-none focus:border-red-500 font-mono text-red-400 placeholder-red-900/50 transition-all shadow-[0_0_15px_rgba(239,68,68,0.1)] resize-none"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && sendCommand()}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendCommand();
+              }
+            }}
             placeholder="root@kalki:~# "
             autoFocus
           />

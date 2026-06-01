@@ -1,6 +1,7 @@
 import sys
 import time
 import requests
+import re
 from bs4 import BeautifulSoup
 import json
 
@@ -16,6 +17,9 @@ def scrape_wikipedia(keyword):
             text_blocks = []
             for p in paragraphs:
                 text = p.get_text().strip()
+                # Clean wikipedia artifacts [1], [2], [edit] without touching (1995) or [born 1995]
+                text = re.sub(r'\[\d+\]', '', text)
+                text = re.sub(r'\[edit\]', '', text)
                 if len(text) > 50:
                     text_blocks.append(text)
                 # if len(text_blocks) >= 4:
